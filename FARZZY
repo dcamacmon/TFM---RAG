@@ -1,0 +1,308 @@
+# Core dependencies
+! pip install llama-index
+! pip install llama-index-core
+
+# Azure-specific dependencies
+! pip install azure-search-documents==11.5.1
+! pip install llama-index-vector-stores-azureaisearch
+! pip install llama-index-embeddings-azure-openai
+! pip install llama-index-llms-azure-openai
+
+# Additional tools and utilities
+! pip install "crewai[tools]"
+! pip install llama-parse
+! pip install llama-index-readers-file
+! pip install matplotlib
+! pip install python-dotenv
+! pip install fpdf
+! pip install reportlab
+
+import os
+from dotenv import load_dotenv
+from azure.core.credentials import AzureKeyCredential
+from azure.search.documents import SearchClient
+from azure.search.documents.indexes import SearchIndexClient
+from llama_index.core import SimpleDirectoryReader, StorageContext, VectorStoreIndex
+from llama_index.embeddings.azure_openai import AzureOpenAIEmbedding
+from llama_index.llms.azure_openai import AzureOpenAI
+from llama_index.vector_stores.azureaisearch import AzureAISearchVectorStore, IndexManagement
+from llama_parse import LlamaParse
+import nest_asyncio
+nest_asyncio.apply()
+
+load_dotenv()
+
+# Environment Variables
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
+AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
+AZURE_OPENAI_CHAT_COMPLETION_DEPLOYED_MODEL_NAME = os.getenv("AZURE_OPENAI_CHAT_COMPLETION_DEPLOYED_MODEL_NAME") # I'm using GPT-4o-mini
+AZURE_OPENAI_EMBEDDING_DEPLOYED_MODEL_NAME = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYED_MODEL_NAME") # I'm using text-embedding-3-small
+SEARCH_SERVICE_ENDPOINT = os.getenv("AZURE_SEARCH_SERVICE_ENDPOINT")
+SEARCH_SERVICE_API_KEY = os.getenv("AZURE_SEARCH_ADMIN_KEY")
+INDEX_NAME = "acc-guidelines-index"
+LLAMA_CLOUD_API_KEY=os.getenv("LLAMA_CLOUD_API_KEY")
+
+# Initialize Azure OpenAI and embedding models
+llm = AzureOpenAI(
+    model=AZURE_OPENAI_CHAT_COMPLETION_DEPLOYED_MODEL_NAME,
+    deployment_name=AZURE_OPENAI_CHAT_COMPLETION_DEPLOYED_MODEL_NAME,
+    api_key=AZURE_OPENAI_API_KEY,
+    azure_endpoint=AZURE_OPENAI_ENDPOINT,
+    api_version="2024-06-01"
+)
+
+embed_model = AzureOpenAIEmbedding(
+    model=AZURE_OPENAI_EMBEDDING_DEPLOYED_MODEL_NAME,
+    deployment_name=AZURE_OPENAI_EMBEDDING_DEPLOYED_MODEL_NAME,
+    api_key=AZURE_OPENAI_API_KEY,
+    azure_endpoint=AZURE_OPENAI_ENDPOINT,
+    api_version="2024-06-01"
+)
+
+# Initialize search clients
+credential = AzureKeyCredential(SEARCH_SERVICE_API_KEY)
+index_client = SearchIndexClient(endpoint=SEARCH_SERVICE_ENDPOINT, credential=credential)
+search_client = SearchClient(endpoint=SEARCH_SERVICE_ENDPOINT, index_name=INDEX_NAME, credential=credential)
+
+from llama_parse import LlamaParse
+
+# Set up the parser for ACC PDFs
+parser = LlamaParse(result_type="markdown")
+documents = SimpleDirectoryReader(
+    input_dir="data/acc", 
+    file_extractor={".pdf": parser}
+).load_data()
+
+# Chunk and Index parsed documents in Azure AI Search
+vector_store = AzureAISearchVectorStore(
+    search_client=search_client,
+    index_name="medical-guidelines-index"
+)
+
+index = VectorStoreIndex.from_documents(
+    documents, 
+    vector_store=vector_store
+)
+
+patient_profile = {
+    "patient_id": "43454357890",
+    "name": "Sarah Johnson",
+    "age": 68,
+    "gender": "Female",
+    "height_cm": 165,
+    "weight_kg": 72,
+    "bmi": 26.4,
+    "blood_type": "A-",
+    "allergies": ["Sulfa drugs"],
+    "current_medications": [
+        "Flecainide",
+        "Apixaban",
+        "Metoprolol",
+        "Atorvastatin",
+        "Cilostazol",
+    ],
+    "chronic_conditions": {
+        "atrial_fibrillation": True,
+        "peripheral_arterial_disease": True,
+        "hypertension": True,
+        "hyperlipidemia": True,
+        "coronary_artery_disease": False,
+    },
+    "family_medical_history": {"heart_disease": True, "stroke": True, "cancer": False},
+    "lifestyle_factors": {
+        "smoking": "Former smoker, quit 5 years ago",
+        "alcohol_use": "Rare",
+        "physical_activity_per_week": "4-5 days",
+        "diet": "Heart-healthy, low-sodium",
+        "sleep_hours_per_night": 6,
+    },
+    "recent_lab_results": {
+        "inr": 1.4, 
+        "creatinine_mg_dl": 1.1,
+        "ldl_cholesterol_mg_dl": 85,
+        "hdl_cholesterol_mg_dl": 55,
+        "blood_pressure_mm_hg": "135/80",
+    },
+    "vaccination_status": {
+        "influenza_vaccine": True,
+        "covid_vaccine": True,
+        "pneumonia_vaccine": True,
+    },
+    "surgical_history": [
+        "Carotid endarterectomy",  
+        "Cholecystectomy",         
+    ],
+    "imaging_history": {
+        "last_echocardiogram_date": "2024-07-15",
+        "last_carotid_ultrasound_date": "2024-06-20",
+    },
+    "mental_health": {
+        "anxiety": True,
+        "depression": False,
+        "cognitive_function_issues": False,
+    },
+    "preferences": {
+        "preferred_treatment_type": [
+            "Minimally invasive procedures",
+            "Evidence-based treatments",
+        ],
+        "end_of_life_care": "Yes",
+        "pain_management": "Non-opioid",
+    },
+    "recent_visits": [
+        {
+            "visit_date": "2024-08-25",
+            "reason": "Follow-up for atrial fibrillation",
+            "notes": "Recurrence of AF despite flecainide. Discussing ablation vs alternative antiarrhythmic options.",
+        },
+        {
+            "visit_date": "2024-07-10",
+            "reason": "Peripheral arterial disease management",
+            "notes": "Stable claudication symptoms. Continue current management and exercise program.",
+        },
+    ],
+    "af_management": {
+        "current_treatment": "Flecainide",
+        "treatment_history": [
+            "Rate control with metoprolol",
+            "Rhythm control with flecainide",
+        ],
+        "af_recurrence": True,
+        "considering_options": ["Catheter ablation", "Alternative antiarrhythmic drug"],
+        "chads2_vasc_score": 4,
+        "has_bled_score": 2,
+    },
+    "pad_management": {
+        "ankle_brachial_index": 0.78,
+        "fontaine_classification": "Stage II",
+        "current_treatment": ["Cilostazol", "Supervised exercise program"],
+        "last_vascular_assessment": "2024-06-20",
+    },
+}
+
+from llama_index.core.response.notebook_utils import display_response
+
+# Create a query engine
+query_engine = index.as_query_engine(llm=embed_model, similarity_top_k=3)
+
+# Perform the query based on Sarah's profile
+query_text = (
+    f"Which option reduces stroke risk for a {patient_profile['age']}-year-old "
+    f"female with atrial fibrillation and peripheral arterial disease, "
+    f"who is considering catheter ablation or antiarrhythmic drug therapy?"
+)
+
+# Retrieve and display the response
+response = query_engine.query(query_text)
+display_response(response)
+
+
+from crewai import Agent, Task, Crew, Process
+from crewai_tools import LlamaIndexTool
+from langchain_openai import AzureChatOpenAI
+
+# Define Azure OpenAI configuration for the LLM
+azure_llm = AzureChatOpenAI(
+    azure_endpoint=AZURE_OPENAI_ENDPOINT,
+    api_key=AZURE_OPENAI_API_KEY,
+    model=AZURE_OPENAI_CHAT_COMPLETION_DEPLOYED_MODEL_NAME,
+    api_version="2024-06-01",
+)
+
+# Define the query tool for agents to interact with the ACC guidelines
+query_tool = LlamaIndexTool.from_query_engine(
+    query_engine,
+    name="Medical Guidelines Query Tool",
+    description="Use this tool to look up medical guidelines and recommendations.",
+)
+
+# We'll use the same patient profile information as before
+
+# Embed patient profile information into the agent goals
+# Define the CrewAI agents
+guideline_expert = Agent(
+    role="Guideline Expert",
+    goal=(
+        f"Retrieve and summarize relevant ACC guidelines for a {patient_profile['age']}-year-old "
+        f"with atrial fibrillation and peripheral arterial disease. "
+        "Focus on treatment options such as catheter ablation and antiarrhythmic therapy."
+    ),
+    backstory="You are an expert on ACC guidelines for managing atrial fibrillation and PAD.",
+    tools=[query_tool],
+    llm=azure_llm,
+    verbose=True,
+)
+
+patient_educator = Agent(
+    role="Patient Educator",
+    goal=(
+        f"Translate the medical guidelines into easy-to-understand terms for Sarah Johnson. "
+        "Focus on explaining the treatment options available for managing atrial fibrillation."
+    ),
+    backstory="You explain complex medical terms in patient-friendly language.",
+    llm=azure_llm,
+    verbose=True,
+)
+
+treatment_planner = Agent(
+    role="Treatment Planner",
+    goal=(
+        f"Create a personalized treatment plan for Sarah Johnson, considering her preference for minimally invasive procedures "
+        f"and her options of catheter ablation or antiarrhythmic therapy."
+    ),
+    backstory="You specialize in personalized treatment plans based on patient history and preferences.",
+    llm=azure_llm,
+    verbose=True,
+)
+
+output_generator = Agent(
+    role="Output Generator",
+    goal=(
+        f"Compile the information into a comprehensive patient decision aid document for Sarah Johnson, "
+        f"including a clear summary of her treatment options and next steps."
+    ),
+    backstory="You ensure that the medical recommendations are presented clearly and concisely.",
+    llm=azure_llm,
+    verbose=True,
+)
+
+# Define tasks for each agent
+task1 = Task(
+    description="Retrieve ACC guidelines for managing atrial fibrillation and PAD.",
+    expected_output="Summarized guidelines with a focus on catheter ablation and stroke risk reduction.",
+    agent=guideline_expert,
+)
+
+task2 = Task(
+    description="Translate the guidelines into patient-friendly language.",
+    expected_output="Simplified, patient-friendly explanations of the treatment options.",
+    agent=patient_educator,
+)
+
+task3 = Task(
+    description="Personalize the treatment plan according to the patient's preferences.",
+    expected_output="A treatment plan tailored to the patient's specific conditions and preferences.",
+    agent=treatment_planner,
+)
+
+task4 = Task(
+    description="Generate a patient decision aid document.",
+    expected_output="A final decision aid document summarizing the patient's condition and treatment recommendations.",
+    agent=output_generator,
+)
+
+# Create the Crew and define the process flow
+crew = Crew(
+    agents=[guideline_expert, patient_educator, treatment_planner, output_generator],
+    tasks=[task1, task2, task3, task4],
+    process=Process.sequential,  # Ensures tasks are executed in sequence
+    verbose=True,
+)
+
+# Execute the multi-step reasoning process
+result = crew.kickoff()
+
+# Display the final patient decision aid
+print("Final Patient Decision Aid:")
+print(result)
+
